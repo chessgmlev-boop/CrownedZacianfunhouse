@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>aarneshsupercheats</title>
+<style>
+  :root {
+    color-scheme: light;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100%;
+    background: #ffffff;
+    color: #000000;
+    font-family: Arial, Helvetica, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+  }
+  .card {
+    width: 100%;
+    max-width: 400px;
+    background: #ffffff;
+    border: 1px solid #000000;
+    padding: 24px;
+    height: fit-content;
+  }
+  h1 {
+    text-align: center;
+    font-size: 20px;
+    margin: 0 0 24px;
+    font-weight: bold;
+  }
+  .tag {
+    text-align: center;
+    font-size: 12px;
+    color: #000000;
+    margin: 0 0 22px;
+  }
+  .field { margin-bottom: 20px; }
+  label {
+    display: block;
+    font-weight: bold;
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+  input[type="text"] {
+    width: 100%;
+    font-family: inherit;
+    font-size: 15px;
+    padding: 8px;
+    border: 1px solid #000000;
+    color: #000000;
+    background: #fff;
+    outline: none;
+  }
+  input[type="text"]:focus { outline: 2px solid #000000; outline-offset: 1px; }
+  .result { margin-top: 10px; min-height: 18px; }
+  .dms { font-size: 18px; font-weight: bold; }
+  .decimal { font-size: 12px; color: #555555; }
+  .err { font-size: 12px; font-weight: bold; }
+  .divider { border: none; border-top: 1px solid #000000; margin: 22px 0 18px; }
+  button {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 10px 16px;
+    background: #000000;
+    color: #ffffff;
+    border: 1px solid #000000;
+    cursor: pointer;
+    width: 100%;
+  }
+  button:hover { background: #ffffff; color: #000000; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .loc-result { margin-top: 10px; font-size: 14px; }
+  .loc-note { margin-top: 4px; font-size: 11px; color: #555555; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>aarneshsupercheats</h1>
+    <p class="tag">I love diddy</p>
+
+    <div class="field">
+      <label for="coords">Coordinates (Latitude, Longitude)</label>
+      <input type="text" id="coords" placeholder="e.g. 40.7128, -74.0060 or 40°42'46&quot;N, 74°0'22&quot;W" autocomplete="off" spellcheck="false">
+      <div class="result" id="coordResult"></div>
+    </div>
+
+    <hr class="divider">
+
+    <button id="findBtn" type="button">Find Location</button>
+    <div class="loc-result" id="locResult"></div>
+    <div class="loc-note">AI best guess — always double-check on a real map.</div>
+  </div>
+
+<script>
+  const coordsInput = document.getElementById('coords');
+  const coordResult = document.getElementById('coordResult');
+  const findBtn = document.getElementById('findBtn');
+  const locResult = document.getElementById('locResult');
+
+  let latDecimal = null;
+  let lonDecimal = null;
+  let sampleNS = null;
+
+  function parseCoordinate(raw) {
+    if (!raw || !raw.trim()) return { empty: true };
+    let str = raw.trim().toUpperCase();
+
+    let direction = null;
+    const dirMatch = str.match(/[NSEW]/);
+    if (dirMatch) {
+      direction = dirMatch[0];
+      str = str.replace(/[NSEW]/g, '');
+    }
+
+    const cleaned = str.replace(/[°'"′″:]/g, ' ').replace(/\s+/g, ' ').trim();
+    const tokens = cleaned.split(' ').filter(Boolean);
+    const nums = tokens.map(Number).filter(n => !Number.isNaN(n));
+
+    if (nums.length === 0) return { error: "Couldn't read that value." };
+    if (nums.length > 3) return { error: 'Too many numbers to parse.' };
+
+    let deg;
+    const sign = nums[0] < 0 ? -1 : 1;
+    if (nums.length === 1) {
+      deg = nums[0];
+    } else if (nums.length === 2) {
+      deg = sign * (Math.abs(nums[0]) + nums[1] / 60);
+    } else {
+      deg = sign * (Math.abs(nums[0]) + nums[1] / 60 + nums[2] / 3600);
+    }
+
+    if (direction === 'S' || direction === 'W') deg = -Math.abs(deg);
+    else if (direction === 'N' || direction === 'E') deg = Math.abs(deg);
+
+    return { value: deg };
+  }
+
+  function toDMS(decDeg, isLat) {
+    const dir = isLat ? (decDeg < 0 ? 'S' : 'N') : (decDeg < 0 ? 'W' : 'E');
+    const abs = Math.abs(decDeg);
+    let d = Math.floor(abs);
+    let minFull = (abs - d) * 60;
+    let m = Math.floor(minFull);
+    let s = Math.round((minFull - m) * 60 * 100) / 100;
+    if (s >= 60) { s -= 60; m += 1; }
+    if (m >= 60) { m -= 60; d += 1; }
+    return `${d}°${m}'${s}"${dir}`;
+  }
+
+  function render() {
+    const raw = coordsInput.value;
+    latDecimal = null;
+    lonDecimal = null;
+
+    if (!raw.trim()) { coordResult.innerHTML = ''; return; }
+
+    const parts = raw.split(',');
+    if (parts.length !== 2) {
+      coordResult.innerHTML = '<div class="err">Separate latitude and longitude with a comma.</div>';
+      return;
+    }
+
+    const latParsed = parseCoordinate(parts[0]);
+    const lonParsed = parseCoordinate(parts[1]);
+
+    if (latParsed.error) { coordResult.innerHTML = `<div class="err">Latitude: ${latParsed.error}</div>`; return; }
+    if (lonParsed.error) { coordResult.innerHTML = `<div class="err">Longitude: ${lonParsed.error}</div>`; return; }
+    if (latParsed.empty || lonParsed.empty) { coordResult.innerHTML = '<div class="err">Enter both a latitude and a longitude.</div>'; return; }
+    if (Math.abs(latParsed.value) > 90) { coordResult.innerHTML = '<div class="err">Latitude should be between -90 and 90 degrees.</div>'; return; }
+    if (Math.abs(lonParsed.value) > 180) { coordResult.innerHTML = '<div class="err">Longitude should be between -180 and 180 degrees.</div>'; return; }
+
+    const latDMS = toDMS(latParsed.value, true);
+    const lonDMS = toDMS(lonParsed.value, false);
+    latDecimal = parseFloat(latParsed.value.toFixed(6));
+    lonDecimal = parseFloat(lonParsed.value.toFixed(6));
+
+    coordResult.innerHTML = `<div class="dms">${latDMS}, ${lonDMS}</div><div class="decimal">${latDecimal}°, ${lonDecimal}°</div>`;
+  }
+
+  coordsInput.addEventListener('input', () => { render(); locResult.innerHTML = ''; });
+
+  function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  findBtn.addEventListener('click', async () => {
+    if (latDecimal === null || lonDecimal === null) {
+      locResult.innerHTML = '<div class="err">Enter a valid latitude and longitude first.</div>';
+      return;
+    }
+    findBtn.disabled = true;
+    locResult.innerHTML = '<div class="decimal">Thinking...</div>';
+    try {
+      if (!sampleNS) {
+        if (!window.claude) throw { code: 'not_granted' };
+        sampleNS = await window.claude.use('sample');
+        if (!sampleNS) throw { code: 'not_granted' };
+      }
+      const prompt = `Identify the nearest well-known place, landmark, city, or address to these coordinates: latitude ${latDecimal}, longitude ${lonDecimal}. Reply with ONLY the name of the place, a few words, nothing else.`;
+      const { text } = await sampleNS(prompt, { modelTier: 'quick' });
+      const name = text.trim();
+      locResult.innerHTML = `Is this the location: <b>${escapeHtml(name)}</b>?`;
+    } catch (e) {
+      const code = e && e.code;
+      let msg = 'Something went wrong. Try again.';
+      if (['not_granted', 'sampling_disabled', 'not_declared', 'capability_disabled', 'capability_removed'].includes(code)) {
+        msg = 'Location lookup is not available here.';
+      } else if (code === 'rate_limited') {
+        msg = 'Too many requests. Try again in a bit.';
+      } else if (code === 'refused' || code === 'empty_completion') {
+        msg = "Couldn't identify that location. Try again.";
+      }
+      locResult.innerHTML = `<div class="err">${msg}</div>`;
+    } finally {
+      findBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
